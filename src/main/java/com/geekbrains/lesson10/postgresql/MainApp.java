@@ -4,8 +4,8 @@ public class MainApp {
     /**
      * sudo apt install postgresql postgresql-contrib
      * sudo systemctl status postgresql
-     * sudo -i -u postgres
-     * psql
+     * TODO: sudo -i -u postgres
+     * TODO: psql
      * * * ...
      * \q
      * exit
@@ -304,6 +304,354 @@ public class MainApp {
      *     46 | Max    |  9
      *     50 | Weak   |  8
      * (9 rows)
+     *
+     * -----------------------------------------------------------------------------------------------------------------
+    MATERIALIZED VIEW в отличии от VIEW хранит не только запрос но и результат
+     * TODO: CREATE MATERIALIZED VIEW mmv AS SELECT score FROM students WHERE score <> 50;
+     * SELECT 9
+     * TODO: SELECT * FROM mmv;
+     * @ score
+     * @-------
+     *     98
+     *     60
+     *     65
+     *     78
+     *     44
+     *     46
+     *     51
+     *     48
+     *     57
+     * (9 rows)
+     * TODO: REFRESH MATERIALIZED VIEW mmv;
+     * REFRESH MATERIALIZED VIEW
+     * -----------------------------------------------------------------------------------------------------------------
+     Тестируем в терминале транзакции
+     * свойства транзакций
+     * * атомарность - либо полностью фиксируется в базе либо не фиксируется вообще
+     * * согласованность - в случае транзакции БД должна перейти из одного согласованного состояния в другое согласованного
+     * * изолированность - транзакции минимально воздействуют друг на друга
+     * * долговечность - если транзакция осуществилась то она сохранена в БД а не в промежут состоянии
+     4 уровня изоляции
+     * * read uncommitted - грязное чтение. если по итогу транзакции был откат то параллельная транзакция выдаст не актуальную и-ю.
+     *                      Имеет самую высокую скорость выполнения и самую низкую согласованность имеет уровень.
+     * * read committed   - параллельно исполняющиеся транзакции видят только зафиксированные изменения из других транзакций
+     * * Repeatable read
+     * * serializable     - транзакции могут параллельно изменять БД
+     *                      самую низкую скорость выполнения и самую высокую согласованность
+     * TODO: SELECT * FROM students;
+     * @ id |  name  | score
+     * @----+--------+-------
+     *   3 | Bob3   |    98
+     *   5 | Bob5   |    60
+     *   6 | Bob6   |    65
+     *   4 | Bob4   |    78
+     *   7 | Jonh   |    44
+     *   8 | Weak   |    50
+     *   9 | Max    |    46
+     *  10 | George |    51
+     *  11 | Jane   |    48
+     *  12 | July   |    57
+     * (10 rows)
+     * TODO: SHOW default_transaction_isolation;
+     * @ default_transaction_isolation
+     * @-------------------------------
+     *  read committed
+     * (1 row)
+     * FIXME: SET TRANSACTION ISOLATION LEVEL // (one of four)
+     начнем транзакцию
+     * TODO: BEGIN TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+     * BEGIN
+     * TODO 2(new terminal): BEGIN TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+     * TODO: INSERT INTO students (name, score) VALUES ('Ivan', 100);
+     * postgres=# INSERT INTO students (name, score) VALUES ('Ivan', 100);
+     * INSERT 0 1
+     * TODO 2: SELECT * FROM students WHERE name = 'Ivan';
+     * @ id | name | score
+     * @----+------+-------
+     * (0 rows) ---------------------!!!!!!!!!!!!!!!!!!!!!!!!!
+     Почему мы не видим "мусорного чтения"? Потому что PostgreSQL не поддерживает READ UNCOMMITTED
+     * TODO: COMMIT;
+     * TODO 2: SELECT * FROM students WHERE name = 'Ivan';
+     * ERROR:  current transaction is aborted, commands ignored until end of transaction block
+     * TODO 2: END;
+     * ROLLBACK
+     * TODO 2: SELECT * FROM students WHERE name = 'Ivan';
+     * @ id | name | score
+     * @----+------+-------
+     *  13 | Ivan |   100
+     * (1 row)
+     * TODO: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+     * BEGIN
+     * TODO 2: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+     * BEGIN
+     * TODO: UPDATE students SET name = 'John' WHERE id = 7;
+     * UPDATE 1
+     * TODO: SELECT * FROM students WHERE name = 'John';
+     * @ id | name | score
+     * @----+------+-------
+     *   7 | John |    44
+     * (1 row)
+     * TODO 2: SELECT * FROM students WHERE name = 'John';
+     * @ id | name | score
+     * @----+------+-------
+     * (0 rows)
+     * TODO 2: UPDATE students SET score = 99 WHERE name = 'John';
+     * UPDATE 0
+     !!! а мог бы и перейти в режим ожидания!!!!
+     * TODO: COMMIT;
+     Теперь режим serializable
+     * TODO: CREATE TABLE modes ( num integer, mode text );
+     * CREATE TABLE
+     * TODO: INSERT INTO modes VALUES ( 1, 'LOW' ), ( 2, 'HIGH' );
+     * INSERT 0 2
+     * TODO: SELECT * FROM modes;
+     * @ num | mode
+     * -----+------
+     *    1 | LOW
+     *    2 | HIGH
+     * (2 rows)
+     * TODO: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+     * TODO 2: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+     * TODO: UPDATE modes SET mode = 'HIGH' WHERE mode = 'LOW' RETURNING *;
+     * @ num | mode
+     * @-----+------
+     *    1 | HIGH
+     * (1 row)
+     *
+     * UPDATE 1
+     * TODO 2: UPDATE modes SET mode = 'LOW' WHERE mode = 'HIGH' RETURNING *;
+     * @ num | mode
+     * @-----+------
+     *    2 | LOW
+     * (1 row)
+     *
+     * UPDATE 1
+     * TODO: SELECT * FROM modes;
+     * @ num | mode
+     * @-----+------
+     *    2 | HIGH
+     *    1 | HIGH
+     * (2 rows)
+     * TODO 2: SELECT * FROM modes;
+     * @ num | mode
+     * @-----+------
+     *    1 | LOW
+     *    2 | LOW
+     * (2 rows)
+     * TODO: COMMIT;
+     * COMMIT
+     * TODO 2: COMMIT;
+     * ERROR:  could not serialize access due to read/write dependencies among transactions
+     * DETAIL:  Reason code: Canceled on identification as a pivot, during commit attempt.
+     * HINT:  The transaction might succeed if retried.
+     ПОЧЕМУ не получилось параллельно управлять БД? .... возникла не совместимость тк параллельно не равно последовательно.
+     ТАЙНА!!!!!!!!!!!!
+     *
+     * TODO: ROLLBACK;
+     * TODO 2: ROLLBACK;
+     Блокировка Транзакций.
+     * FIXME: SELECT * FROM students WHERE id = 5 FOR UPDATE; - заблокирует и переведет в ожидание "терминал" с UPDATE данной строки(или СТРОКАМИ)
+     что бы все строки заблокировать
+     * FIXME: LOCK TABLE students IN ACCESS EXCLUSIVE MODE;
+     *
+     ИНДЕКСЫ
+     * TODO: \dt
+     * @ public | demo     | table | postgres
+     *  public | modes    | table | postgres
+     *  public | progress | table | postgres
+     *  public | students | table | postgres
+     *  TODO: SELECT * FROM students;
+     *@  3 | Bob3   |    98
+     *   5 | Bob5   |    60
+     *   6 | Bob6   |    65
+     *   4 | Bob4   |    78
+     *   8 | Weak   |    50
+     *   9 | Max    |    46
+     *  10 | George |    51
+     *  11 | Jane   |    48
+     *  12 | July   |    57
+     *  13 | Ivan   |   100
+     *   7 | John   |    44
+     Посмотрим уже имеющиеся индексы.
+     * TODO: \d students
+     * @ и их нет
+     *  id     | integer |           | not null | nextval('students_id_seq'::regclass)
+     *  name   | text    |           |          |
+     *  score  | integer |           |          |
+     * TODO: CREATE INDEX name_idx ON students (name);
+     * CREATE INDEX
+     * TODO: \q
+     * TODO: psql
+     * TODO: \d students
+     * @
+     *  \d students
+     *                             Table "public.students"
+     *  Column |  Type   | Collation | Nullable |               Default
+     * --------+---------+-----------+----------+--------------------------------------
+     *  id     | integer |           | not null | nextval('students_id_seq'::regclass)
+     *  name   | text    |           |          |
+     *  score  | integer |           |          |
+     * Indexes:
+     *     "students_pkey" PRIMARY KEY, btree (id)
+     *     "name_idx" btree (name)
+     * TODO: \timing on
+     * TODO: SELECT * FROM students WHERE name = 'John';
+     * @
+     *  id | name | score
+     * ----+------+-------
+     *   7 | John |    44
+     * (1 row)
+     *
+     * Time: 0,794 ms
+     * TODO: DROP INDEX name_idx;
+     * DROP INDEX
+     * Time: 12,272 ms
+     * TODO: SELECT * FROM students WHERE name = 'John';
+     *  id | name | score
+     * ----+------+-------
+     *   7 | John |    44
+     * (1 row)
+     *
+     * Time: 0,476 ms --- ДОЛЖНО БЫТЬ 8,872 мс !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     индексы ускоряют поиск но замедляют запись
+     * TODO: ALTER TABLE students ADD COLUMN description text;
+     * TODO: UPDATE students SET description = name;
+     Повесим на description  индекс уникальности
+     * TODO: CREATE UNIQUE INDEX desc_unique_idx ON students (description);
+     * TODO: \d students
+     * @
+     *                                Table "public.students"
+     *    Column    |  Type   | Collation | Nullable |               Default
+     * -------------+---------+-----------+----------+--------------------------------------
+     *  id          | integer |           | not null | nextval('students_id_seq'::regclass)
+     *  name        | text    |           |          |
+     *  score       | integer |           |          |
+     *  description | text    |           |          |
+     * Indexes:
+     *     "students_pkey" PRIMARY KEY, btree (id)
+     *     "desc_unique_idx" UNIQUE, btree (description)
+     * TODO: INSERT INTO students (name, score, description) VALUES ('Quake', 100, 'John');
+     * ERROR:  duplicate key value violates unique constraint "desc_unique_idx"
+     * DETAIL:  Key (description)=(John) already exists.
+     * Time: 0,541 ms
+     * TODO: DROP INDEX desc_unique_idx;
+     * DROP INDEX
+    ТАДАМ для решения задачи про паспорта
+     * FIXME: CREATE UNIQUE INDEX desc_unique_idx ON students (lower(description)); не даст добавить разные внешне но одинаковые записи в приведеном регистре
+     Частичный индекс - редко помогают в скорости
+     * FIXME: CREATE INDEX name_idx ON students (name) WHERE ...;
+     * -----------------------------------------------------------------------------------------------------------------
+     Распечатать у какого студента химия сдана на 4
+     * TODO: SELECT * FROM students;
+     * @
+     *  id |  name  | score | description
+     * ----+--------+-------+-------------
+     *   3 | Bob3   |    98 | Bob3
+     *   5 | Bob5   |    60 | Bob5
+     *   6 | Bob6   |    65 | Bob6
+     *   4 | Bob4   |    78 | Bob4
+     *   8 | Weak   |    50 | Weak
+     *   9 | Max    |    46 | Max
+     *  10 | George |    51 | George
+     *  11 | Jane   |    48 | Jane
+     *  12 | July   |    57 | July
+     *  13 | Ivan   |   100 | Ivan
+     *   7 | John   |    44 | John
+     *  14 | Quake  |   100 | Jojn
+     * (12 rows)
+     * TODO: SELECT * FROM progress;
+     * @
+     *  id |  subject  | mark | student_id
+     * ----+-----------+------+------------
+     *   2 | Chemistry |    4 |
+     *   3 | Chemistry |    5 |          9
+     * TODO: SELECT s.name, p.subject, p.mark
+     *       FROM progress AS p
+     *       JOIN students AS s ON s.id = p.student_id
+     *       WHERE p.mark = 5;
+     * @
+     *  name |  subject  | mark
+     * ------+-----------+------
+     *  Max  | Chemistry |    5
+     * (1 row)
+     * =================================================================================================================
+     Возвращаясь к 4м уровням изоляции
+ READ COMMITTED
+     * TODO: CREATE TABLE isodemo (id int, score int);
+     *       INSERT INTO isodemo VALUES (1, 50);
+     *       SELECT * FROM isodemo;
+     * @
+     * id | score
+     * ----+-------
+     *   1 |    50
+     * (1 row)
+     * TODO: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+     * TODO 2: BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+     * TODO 2: SELECT * FROM isodemo WHERE id = 1;
+     * @
+     *  id | score
+     * ----+-------
+     *   1 |    50
+     * (1 row)
+     * TODO: UPDATE isodemo SET score = 60 WHERE id = 1;
+     * TODO 2: SELECT * FROM isodemo WHERE id = 1;
+     * @
+     *  id | score
+     * ----+-------
+     *   1 |    50
+     * (1 row)
+     ИТОГ: Вторая транзакция не увидела изменений.
+     * TODO: COMMIT;
+     * TODO 2: SELECT * FROM isodemo WHERE id = 1;
+     * @
+     *  id | score
+     * ----+-------
+     *   1 |    60
+     * (1 row)
+     ИТОГ: после COMMIT  все увидела
+     * TODO 2: COMMIT;
+     *
+ REPEATABLE READ
+     * TODO: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+     * TODO 2: BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+     * TODO 2: SELECT * FROM isodemo WHERE id = 1;
+     * @
+     *  id | score
+     * ----+-------
+     *   1 |    60
+     * (1 row)
+     * TODO: UPDATE isodemo SET score = 70 WHERE id = 1;
+     * TODO 2: SELECT * FROM isodemo WHERE id = 1;
+     * @
+     *  id | score
+     * ----+-------
+     *   1 |    60
+     * (1 row)
+     И снова вторая транзакция ничего не увидела
+     * TODO: COMMIT;
+     * TODO 2: SELECT * FROM isodemo WHERE id = 1;
+     * @
+     *  id | score
+     * ----+-------
+     *   1 |    60
+     * (1 row)
+     ИТОГ: теперь даже после комита не видит!
+     * FIXME: UPDATE isodemo SET score = 80 WHERE id = 1; ДАСТ ОШИБКУ!! Можно делать изменения если
+     * данные не затронула другая транзакция
+     * ---> не удалось сериализовать доступ из-за параллельного изменения.
+     * ---> транзакция работает со слепком таблицы на момент начала транзакции.
+     * TODO 2: ROLLBACK;
+     *
+ SERIALIZABLE
+     * TODO: DELETE FROM modes;
+     * TODO: INSERT INTO modes VALUES (1, 'A'), (2, 'B');
+     * TODO: SELECT * FROM modes;
+     * @
+     *  num | mode
+     * -----+------
+     *    1 | A
+     *    2 | B
+     * (2 rows)
      */
 
     /**
