@@ -642,7 +642,7 @@ public class MainApp {
      * ---> транзакция работает со слепком таблицы на момент начала транзакции.
      * TODO 2: ROLLBACK;
      *
- SERIALIZABLE
+ SERIALIZABLE - разрешат паралельные транзакции которые можно свести к последовательным дающим 1 и тот же результат, а не разный
      * TODO: DELETE FROM modes;
      * TODO: INSERT INTO modes VALUES (1, 'A'), (2, 'B');
      * TODO: SELECT * FROM modes;
@@ -652,6 +652,41 @@ public class MainApp {
      *    1 | A
      *    2 | B
      * (2 rows)
+     * TODO: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+     * TODO 2: BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+     * TODO: UPDATE moDES SET mode = 'B' WHERE mode = 'A' RETURNING *;
+     * @
+     *  num | mode
+     * -----+------
+     *    1 | B
+     * (1 row)
+     * TODO 2: UPDATE moDES SET mode = 'A' WHERE mode = 'B' RETURNING *;
+     * @
+     *  num | mode
+     * -----+------
+     *    2 | A
+     * (1 row)
+     Что нам это дало?
+        А дало нам это
+                Транз 1 =   B
+                            B
+                Транз 2 =   A
+                            A
+        всего 2 варианта
+            Т1 -> T2  = A
+                        A
+            Т2 -> T1  = B
+                        B
+        Но дадут нам нормально завершить обе транзакции при комите только для случая
+            A -> B
+            B -> A
+     * TODO: COMMIT;
+     * COMMIT
+     * TODO 2: COMMIT;
+     * ERROR:  could not serialize access due to read/write dependencies among transactions
+     * DETAIL:  Reason code: Canceled on identification as a pivot, during commit attempt.
+     * HINT:  The transaction might succeed if retried.
+     *
      */
 
     /**
